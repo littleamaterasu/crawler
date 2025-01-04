@@ -10,7 +10,7 @@ const producer = new Producer(kafkaClient);
 const kafkaTopic = 'training-data';
 
 // Cấu hình Elasticsearch
-const elasticsearchUrl = 'http://172.30.34.103:9200';
+const elasticsearchUrl = 'http://localhost:9200';
 const elasticsearchIndexName = 'crawled-stock-data';
 const elasticsearchAnalyzer = 'my_vi_analyzer';
 
@@ -19,15 +19,16 @@ const client = new Client({
 });
 
 const urls = [
-    'https://vnexpress.net/kinh-doanh/chung-khoan',
-    ...Array.from({ length: 20 }, (_, i) => `https://vnexpress.net/kinh-doanh/chung-khoan-p${i + 1}`)
+    ...Array.from({ length: 19 }, (_, i) => `https://vnexpress.net/kinh-doanh/chung-khoan-p${20 - i}`),
+    'https://vnexpress.net/kinh-doanh/chung-khoan'
 ];
 
 let articles = [];
 
 // Hàm kiểm tra trùng lặp bằng Elasticsearch
 const isDuplicate = async (link) => {
-    const { body } = await client.search({
+    console.log(link);
+    const response = await client.search({
         index: elasticsearchIndexName,
         body: {
             query: {
@@ -35,19 +36,31 @@ const isDuplicate = async (link) => {
             }
         }
     });
-    return body.hits.total.value > 0;
+    return response.hits.total.value > 0;
+};
+
+const saveToElasticsearch = async (article) => {
+    try {
+        await client.index({
+            index: elasticsearchIndexName,
+            document: article
+        });
+        console.log(`Đã lưu bài viết vào Elasticsearch: ${article.link}`);
+    } catch (error) {
+        console.error(`Lỗi khi lưu vào Elasticsearch: ${error}`);
+    }
 };
 
 // Hàm tokenize bằng Elasticsearch Analyzer
 const getTokens = async (text) => {
-    const { body } = await client.indices.analyze({
+    const response = await client.indices.analyze({
         index: elasticsearchIndexName,
         body: {
             analyzer: elasticsearchAnalyzer,
             text
         }
     });
-    return body.tokens.map(token => token.token);
+    return response.tokens.map(token => token.token);
 };
 
 // Hàm đẩy dữ liệu qua Kafka
@@ -69,7 +82,8 @@ const fetchArticleDetails = async (link) => {
         const $ = cheerio.load(response.data);
 
         const timeAgo = $('span.date').text().trim() || 'Không có thông tin';
-        const keywords = $('meta[name="news_keywords"]').attr('content') || '';
+        const rawKeyword = $('meta[name="news_keywords"]').attr('content') || '';
+        const keywords = rawKeyword.split(', ');
         const imageDiv = $('div.fig-picture source').first().attr('data-srcset');
         const imageUrl = imageDiv?.split(', ').find(src => src.includes('2x'))?.split(' ')[0] || '';
 
@@ -99,7 +113,7 @@ const fetchDataFromUrl = async (url) => {
         for (let index = 0; index < articleElements.length; index++) {
             const element = articleElements[index];
             const link = $(element).find('a').attr('href');
-            const title = $(element).find('h3.title-news a').text().trim();
+            const title = $(element).find('h2.title-news a').text().trim();
             const description = $(element).find('p.description a').text().trim();
 
             if (title && link && description) {
@@ -110,6 +124,18 @@ const fetchDataFromUrl = async (url) => {
                 }
 
                 const { timeAgo, keywords, articleText, imageUrl } = await fetchArticleDetails(fullLink);
+
+                const article = {
+                    title,
+                    link: fullLink,
+                    description,
+                    timeAgo,
+                    keywords,
+                    content: articleText,
+                    imageUrl,
+                };
+                // Lưu vào Elasticsearch
+                await saveToElasticsearch(article);
 
                 const tokens = [
                     ...(await getTokens(description)),
@@ -151,3 +177,4 @@ const main = async () => {
 };
 
 main();
+
