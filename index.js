@@ -1,79 +1,12 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
-const fs = require('fs');
-const { Client } = require("@elastic/elasticsearch");
-const { KafkaClient, Producer } = require('kafka-node');
-
-// Cấu hình Kafka
-const kafkaClient = new KafkaClient({ kafkaHost: 'localhost:9092' });
-const producer = new Producer(kafkaClient);
-const kafkaTopic = 'training-data';
-
-// Cấu hình Elasticsearch
-const elasticsearchUrl = 'http://localhost:9200';
-const elasticsearchIndexName = 'crawled-stock-data';
-const elasticsearchAnalyzer = 'my_vi_analyzer';
-
-const client = new Client({
-    node: elasticsearchUrl
-});
+const duplicateChecker = require('./service/duplicateChecker');
+const producerService = require('./service/producer');
 
 const urls = [
     ...Array.from({ length: 19 }, (_, i) => `https://vnexpress.net/kinh-doanh/chung-khoan-p${20 - i}`),
     'https://vnexpress.net/kinh-doanh/chung-khoan'
 ];
-
-let articles = [];
-
-// Hàm kiểm tra trùng lặp bằng Elasticsearch
-const isDuplicate = async (link) => {
-    console.log(link);
-    const response = await client.search({
-        index: elasticsearchIndexName,
-        body: {
-            query: {
-                match: { link }
-            }
-        }
-    });
-    return response.hits.total.value > 0;
-};
-
-const saveToElasticsearch = async (article) => {
-    try {
-        await client.index({
-            index: elasticsearchIndexName,
-            document: article
-        });
-        console.log(`Đã lưu bài viết vào Elasticsearch: ${article.link}`);
-    } catch (error) {
-        console.error(`Lỗi khi lưu vào Elasticsearch: ${error}`);
-    }
-};
-
-// Hàm tokenize bằng Elasticsearch Analyzer
-const getTokens = async (text) => {
-    const response = await client.indices.analyze({
-        index: elasticsearchIndexName,
-        body: {
-            analyzer: elasticsearchAnalyzer,
-            text
-        }
-    });
-    return response.tokens.map(token => token.token);
-};
-
-// Hàm đẩy dữ liệu qua Kafka
-const sendToKafka = (data) => {
-    const payloads = [{ topic: kafkaTopic, messages: JSON.stringify(data) }];
-    producer.send(payloads, (err, data) => {
-        if (err) {
-            console.error(`Lỗi khi gửi Kafka: ${err}`);
-        } else {
-            console.log('Đã gửi dữ liệu qua Kafka:', data);
-        }
-    });
-};
 
 // Hàm lấy chi tiết bài viết
 const fetchArticleDetails = async (link) => {
@@ -118,7 +51,7 @@ const fetchDataFromUrl = async (url) => {
 
             if (title && link && description) {
                 const fullLink = new URL(link, url).href;
-                if (await isDuplicate(fullLink)) {
+                if (duplicateChecker.isDuplicate(fullLink)) {
                     console.log(`Bỏ qua bài viết đã tồn tại: ${fullLink}`);
                     continue;
                 }
@@ -134,26 +67,12 @@ const fetchDataFromUrl = async (url) => {
                     content: articleText,
                     imageUrl,
                 };
+
                 // Lưu vào Elasticsearch
-                await saveToElasticsearch(article);
+                await producerService.saveToElasticsearch(article);
 
-                const tokens = [
-                    ...(await getTokens(description)),
-                    ...(await getTokens(articleText))
-                ];
+                duplicateChecker.writeLinkToFile(fullLink);
 
-                const dataToKafka = { tokens, keywords };
-                sendToKafka(dataToKafka);
-
-                articles.push({
-                    title,
-                    link: fullLink,
-                    description,
-                    timeAgo,
-                    keywords,
-                    content: articleText,
-                    imageUrl
-                });
                 console.log(`Đã crawl: ${fullLink}`);
             }
             await sleep(100);
