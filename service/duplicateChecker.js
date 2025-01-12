@@ -1,6 +1,6 @@
 const fs = require('fs');
 
-const linkFilePath = '../link.json'
+const linkFilePath = 'link.json'
 // Hàm đọc file link.json
 const readLinksFromFile = () => {
     try {

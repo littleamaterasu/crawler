@@ -9,7 +9,7 @@ const kafkaTopic = 'crawled-data';
 const saveToElasticsearch = async (article) => {
     try {
         producer.send(
-            [{ topic: kafkaTopic, messages: JSON.stringify(data) }],
+            [{ topic: kafkaTopic, messages: JSON.stringify(article) }],
             (err, data) => {
                 if (err) console.error('Kafka Error:', err);
                 else console.log('Data sent to Kafka:', data);
