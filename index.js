@@ -2,12 +2,13 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const duplicateChecker = require('./service/duplicateChecker');
 const producerService = require('./service/producer');
-
+require('dotenv').config();
 const urls = [
     ...Array.from({ length: 19 }, (_, i) => `https://vnexpress.net/kinh-doanh/chung-khoan-p${20 - i}`),
     'https://vnexpress.net/kinh-doanh/chung-khoan'
 ];
 
+console.log('crawler', 'es url', process.env.ES_URL, 'kafka broker', process.env.KAFKA_HOST)
 // Hàm lấy chi tiết bài viết
 const fetchArticleDetails = async (link) => {
     try {
